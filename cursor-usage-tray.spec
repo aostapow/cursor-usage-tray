@@ -13,7 +13,7 @@ a = Analysis(
     ["app_tray.py"],
     pathex=[],
     binaries=[],
-    datas=[],
+    datas=[("assets/tray-icon.png", "assets")],
     hiddenimports=[
         "pystray._win32",
         "PIL.Image",

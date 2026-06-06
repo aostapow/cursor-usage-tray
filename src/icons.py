@@ -2,16 +2,33 @@ from __future__ import annotations
 
 import ctypes
 import os
+import sys
 from ctypes import wintypes
 from functools import lru_cache
 from pathlib import Path
 from typing import Optional
 
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageDraw
 
 from .usage_levels import UsageLevel, UsageThresholds, usage_level
 
 ICON_SIZE = 64
+TRAY_ICON_NAME = "tray-icon.png"
+TRIANGLE_SOURCE = (255, 140, 0)
+LEVEL_INNER_COLORS = {
+    UsageLevel.LOW: (34, 197, 94),
+    UsageLevel.MEDIUM: (234, 179, 8),
+    UsageLevel.HIGH: (239, 68, 68),
+    UsageLevel.UNKNOWN: (113, 113, 122),
+}
+
+
+def _tray_icon_path() -> Path:
+    if getattr(sys, "frozen", False):
+        base = Path(sys.executable).resolve().parent
+    else:
+        base = Path(__file__).resolve().parent.parent
+    return base / "assets" / TRAY_ICON_NAME
 
 
 def _cursor_exe_paths() -> list[Path]:
@@ -22,6 +39,40 @@ def _cursor_exe_paths() -> list[Path]:
         Path(r"C:\Program Files\Cursor\Cursor.exe"),
     ]
     return [path for path in paths if path.exists()]
+
+
+@lru_cache(maxsize=1)
+def _load_tray_icon_base() -> Optional[Image.Image]:
+    path = _tray_icon_path()
+    if not path.is_file():
+        return None
+    with Image.open(path) as source:
+        return source.convert("RGBA").copy()
+
+
+def _recolor_triangle(image: Image.Image, rgb: tuple[int, int, int]) -> Image.Image:
+    sr, sg, sb = TRIANGLE_SOURCE
+    tr, tg, tb = rgb
+    out = image.copy()
+    pixels = out.load()
+    for y in range(out.height):
+        for x in range(out.width):
+            r, g, b, a = pixels[x, y]
+            if a > 200 and abs(r - sr) <= 5 and abs(g - sg) <= 5 and abs(b - sb) <= 5:
+                pixels[x, y] = (tr, tg, tb, a)
+    return out
+
+
+@lru_cache(maxsize=16)
+def _load_tray_brand_icon(size: int = ICON_SIZE, level: UsageLevel = UsageLevel.UNKNOWN) -> Optional[Image.Image]:
+    base = _load_tray_icon_base()
+    if base is None:
+        return None
+    inner = LEVEL_INNER_COLORS.get(level, LEVEL_INNER_COLORS[UsageLevel.UNKNOWN])
+    image = _recolor_triangle(base, inner)
+    if image.size != (size, size):
+        image = image.resize((size, size), Image.Resampling.LANCZOS)
+    return image
 
 
 @lru_cache(maxsize=1)
@@ -120,44 +171,30 @@ def _hicon_to_image(handle: int, size: int) -> Optional[Image.Image]:
             gdi32.DeleteObject(info.hbmMask)
 
 
-def _draw_amount_badge(amount_usd: float, level: UsageLevel) -> Image.Image:
+def _draw_fallback_icon(level: UsageLevel = UsageLevel.LOW) -> Image.Image:
     colors = {
         UsageLevel.LOW: (34, 197, 94, 255),
         UsageLevel.MEDIUM: (234, 179, 8, 255),
         UsageLevel.HIGH: (239, 68, 68, 255),
         UsageLevel.UNKNOWN: (113, 113, 122, 255),
     }
-    bg = colors.get(level, colors[UsageLevel.UNKNOWN])
     image = Image.new("RGBA", (ICON_SIZE, ICON_SIZE), (0, 0, 0, 0))
     draw = ImageDraw.Draw(image)
-    draw.ellipse((4, 4, ICON_SIZE - 4, ICON_SIZE - 4), fill=bg)
-    label = f"{amount_usd:.0f}" if amount_usd >= 100 else f"{amount_usd:.1f}".rstrip("0").rstrip(".")
-    if len(label) > 5:
-        label = label[:5]
-    try:
-        font = ImageFont.truetype("segoeui.ttf", 16)
-    except OSError:
-        try:
-            font = ImageFont.truetype("arial.ttf", 16)
-        except OSError:
-            font = ImageFont.load_default()
-    bbox = draw.textbbox((0, 0), label, font=font)
-    tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
-    draw.text(((ICON_SIZE - tw) / 2, (ICON_SIZE - th) / 2 - 2), label, fill="white", font=font)
-    return image
-
-
-def _draw_cursor_on_green() -> Image.Image:
-    image = Image.new("RGBA", (ICON_SIZE, ICON_SIZE), (0, 0, 0, 0))
-    draw = ImageDraw.Draw(image)
-    draw.ellipse((2, 2, ICON_SIZE - 2, ICON_SIZE - 2), fill=(34, 197, 94, 255))
-    brand = _load_cursor_brand_icon(40)
-    if brand is not None:
-        image.alpha_composite(brand, (12, 12))
+    draw.ellipse((2, 2, ICON_SIZE - 2, ICON_SIZE - 2), fill=colors.get(level, colors[UsageLevel.UNKNOWN]))
+    cursor = _load_cursor_brand_icon(40)
+    if cursor is not None:
+        image.alpha_composite(cursor, (12, 12))
         return image
     draw.rounded_rectangle((18, 18, 46, 46), radius=8, fill=(20, 20, 20, 255))
     draw.polygon([(24, 34), (34, 24), (40, 38), (32, 38)], fill=(240, 240, 240, 255))
     return image
+
+
+def _brand_icon(level: UsageLevel) -> Image.Image:
+    brand = _load_tray_brand_icon(ICON_SIZE, level)
+    if brand is not None:
+        return brand
+    return _draw_fallback_icon(level)
 
 
 def make_tray_icon(
@@ -167,27 +204,7 @@ def make_tray_icon(
     thresholds: UsageThresholds | None = None,
 ) -> Image.Image:
     if error:
-        image = Image.new("RGBA", (ICON_SIZE, ICON_SIZE), (0, 0, 0, 0))
-        draw = ImageDraw.Draw(image)
-        draw.ellipse((4, 4, ICON_SIZE - 4, ICON_SIZE - 4), fill=(239, 68, 68, 255))
-        try:
-            font = ImageFont.truetype("segoeui.ttf", 24)
-        except OSError:
-            font = ImageFont.load_default()
-        draw.text((22, 14), "!", fill="white", font=font)
-        return image
+        return _brand_icon(UsageLevel.HIGH)
 
     level = usage_level(amount_usd, thresholds)
-    if level == UsageLevel.LOW:
-        return _draw_cursor_on_green()
-    if amount_usd is None:
-        image = Image.new("RGBA", (ICON_SIZE, ICON_SIZE), (0, 0, 0, 0))
-        draw = ImageDraw.Draw(image)
-        draw.ellipse((4, 4, ICON_SIZE - 4, ICON_SIZE - 4), fill=(113, 113, 122, 255))
-        try:
-            font = ImageFont.truetype("segoeui.ttf", 22)
-        except OSError:
-            font = ImageFont.load_default()
-        draw.text((20, 14), "?", fill="white", font=font)
-        return image
-    return _draw_amount_badge(amount_usd, level)
+    return _brand_icon(level)
