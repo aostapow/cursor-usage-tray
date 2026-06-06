@@ -1,0 +1,13 @@
+---
+description: Reglas del proyecto cursor-usage-tray
+globs:
+  - "**/*"
+---
+
+# cursor-usage-tray
+
+- Objetivo: tray app Windows para consumo USD de Cursor vía `WorkosCursorSessionToken`.
+- Stack: Python 3.10+, pystray, requests, Pillow.
+- API no oficial: `GET https://cursor.com/api/usage-summary`.
+- Token solo en runtime desde `state.vscdb`; no en código ni `config.json`.
+- Contexto y decisiones: `docs/CONTEXTO.md`.

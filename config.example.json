@@ -1,0 +1,6 @@
+{
+  "session_token": "",
+  "refresh_interval_seconds": 120,
+  "display_mode": "on_demand_usd",
+  "open_dashboard_on_click": true
+}
