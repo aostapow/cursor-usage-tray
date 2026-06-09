@@ -4,7 +4,7 @@ Icono en la **bandeja del sistema de Windows** con un **monto flotante** que mue
 
 ## Descarga (última versión)
 
-**[v1.1.0 — cursor-usage-tray-v1.1.0-windows.zip](https://github.com/aostapow/cursor-usage-tray/releases/download/v1.1.0/cursor-usage-tray-v1.1.0-windows.zip)**
+**[v1.1.1 — cursor-usage-tray-v1.1.1-windows.zip](https://github.com/aostapow/cursor-usage-tray/releases/download/v1.1.1/cursor-usage-tray-v1.1.1-windows.zip)**
 
 1. Descomprimí el zip (necesitás **toda la carpeta**, incluida `float\`).
 2. Ejecutá **`Iniciar.cmd`** (recomendado). Desbloquea archivos y abre el supervisor de bandeja.
@@ -52,7 +52,7 @@ Salida:
 
 - `dist\cursor-usage-tray\cursor-usage-tray.exe`
 - `dist\cursor-usage-tray\float\cursor-usage-float.exe`
-- `dist\cursor-usage-tray-v1.1.0-windows.zip`
+- `dist\cursor-usage-tray-v1.1.1-windows.zip`
 
 ## Diagnóstico
 
