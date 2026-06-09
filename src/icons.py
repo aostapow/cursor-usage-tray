@@ -10,7 +10,7 @@ from typing import Optional
 
 from PIL import Image, ImageDraw
 
-from .usage_levels import UsageLevel, UsageThresholds, usage_level
+from .usage_levels import ThresholdColors, UsageLevel, UsageThresholds, usage_level
 
 ICON_SIZE = 64
 TRAY_ICON_NAME = "tray-icon.png"
@@ -63,12 +63,26 @@ def _recolor_triangle(image: Image.Image, rgb: tuple[int, int, int]) -> Image.Im
     return out
 
 
-@lru_cache(maxsize=16)
-def _load_tray_brand_icon(size: int = ICON_SIZE, level: UsageLevel = UsageLevel.UNKNOWN) -> Optional[Image.Image]:
+def _level_rgb(level: UsageLevel, colors: ThresholdColors | None) -> tuple[int, int, int]:
+    if colors is not None:
+        return colors.rgb_for(level)
+    return LEVEL_INNER_COLORS.get(level, LEVEL_INNER_COLORS[UsageLevel.UNKNOWN])
+
+
+@lru_cache(maxsize=64)
+def _load_tray_brand_icon(
+    size: int = ICON_SIZE,
+    level: UsageLevel = UsageLevel.UNKNOWN,
+    color_key: str = "",
+) -> Optional[Image.Image]:
     base = _load_tray_icon_base()
     if base is None:
         return None
-    inner = LEVEL_INNER_COLORS.get(level, LEVEL_INNER_COLORS[UsageLevel.UNKNOWN])
+    if color_key:
+        low, medium, high = color_key.split("|", 2)
+        inner = _level_rgb(level, ThresholdColors(low=low, medium=medium, high=high))
+    else:
+        inner = _level_rgb(level, None)
     image = _recolor_triangle(base, inner)
     if image.size != (size, size):
         image = image.resize((size, size), Image.Resampling.LANCZOS)
@@ -171,16 +185,12 @@ def _hicon_to_image(handle: int, size: int) -> Optional[Image.Image]:
             gdi32.DeleteObject(info.hbmMask)
 
 
-def _draw_fallback_icon(level: UsageLevel = UsageLevel.LOW) -> Image.Image:
-    colors = {
-        UsageLevel.LOW: (34, 197, 94, 255),
-        UsageLevel.MEDIUM: (234, 179, 8, 255),
-        UsageLevel.HIGH: (239, 68, 68, 255),
-        UsageLevel.UNKNOWN: (113, 113, 122, 255),
-    }
+def _draw_fallback_icon(level: UsageLevel = UsageLevel.LOW, colors: ThresholdColors | None = None) -> Image.Image:
+    rgb = _level_rgb(level, colors)
+    fill = (*rgb, 255)
     image = Image.new("RGBA", (ICON_SIZE, ICON_SIZE), (0, 0, 0, 0))
     draw = ImageDraw.Draw(image)
-    draw.ellipse((2, 2, ICON_SIZE - 2, ICON_SIZE - 2), fill=colors.get(level, colors[UsageLevel.UNKNOWN]))
+    draw.ellipse((2, 2, ICON_SIZE - 2, ICON_SIZE - 2), fill=fill)
     cursor = _load_cursor_brand_icon(40)
     if cursor is not None:
         image.alpha_composite(cursor, (12, 12))
@@ -190,21 +200,31 @@ def _draw_fallback_icon(level: UsageLevel = UsageLevel.LOW) -> Image.Image:
     return image
 
 
-def _brand_icon(level: UsageLevel) -> Image.Image:
-    brand = _load_tray_brand_icon(ICON_SIZE, level)
+def _color_cache_key(colors: ThresholdColors | None) -> str:
+    if colors is None:
+        return ""
+    return f"{colors.low}|{colors.medium}|{colors.high}"
+
+
+def _brand_icon(level: UsageLevel, colors: ThresholdColors | None = None) -> Image.Image:
+    color_key = _color_cache_key(colors)
+    brand = _load_tray_brand_icon(ICON_SIZE, level, color_key)
     if brand is not None:
         return brand
-    return _draw_fallback_icon(level)
+    return _draw_fallback_icon(level, colors)
 
 
 def make_tray_icon(
-    amount_usd: float | None = None,
+    usage_percent: float | None = None,
     *,
     error: bool = False,
     thresholds: UsageThresholds | None = None,
+    colors: ThresholdColors | None = None,
+    amount_usd: float | None = None,
 ) -> Image.Image:
     if error:
-        return _brand_icon(UsageLevel.HIGH)
+        return _brand_icon(UsageLevel.HIGH, colors)
 
-    level = usage_level(amount_usd, thresholds)
-    return _brand_icon(level)
+    pct = usage_percent if usage_percent is not None else amount_usd
+    level = usage_level(pct, thresholds)
+    return _brand_icon(level, colors)

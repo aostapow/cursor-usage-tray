@@ -63,15 +63,16 @@ class TraySupervisor:
     def _apply_state_to_icon(self) -> None:
         state = read_state()
         thresholds = self._config.usage_thresholds()
+        colors = self._config.threshold_colors()
         try:
             if state and state.has_error:
-                self._icon.icon = make_tray_icon(error=True)
+                self._icon.icon = make_tray_icon(error=True, colors=colors)
                 self._icon.title = state.tray_tip
             elif state and state.on_demand_usd is not None:
-                self._icon.icon = make_tray_icon(state.on_demand_usd, thresholds=thresholds)
+                self._icon.icon = make_tray_icon(state.on_demand_usd, thresholds=thresholds, colors=colors)
                 self._icon.title = state.tray_tip
             else:
-                self._icon.icon = make_tray_icon(thresholds=thresholds)
+                self._icon.icon = make_tray_icon(thresholds=thresholds, colors=colors)
                 self._icon.title = state.tray_tip if state else "Cursor usage"
         except (ValueError, OSError):
             pass
@@ -145,6 +146,19 @@ class TraySupervisor:
         cmd = settings_launch_command()
         self._settings_process = subprocess.Popen(cmd)  # noqa: S603
 
+    def _stop_settings(self, *, timeout: float = 3.0) -> None:
+        proc = self._settings_process
+        if proc is None or proc.poll() is not None:
+            self._settings_process = None
+            return
+        proc.terminate()
+        try:
+            proc.wait(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.wait(timeout=timeout)
+        self._settings_process = None
+
     def _menu_quit(self, _icon: pystray.Icon, _item: pystray.MenuItem) -> None:
         self._request_quit()
 
@@ -157,6 +171,7 @@ class TraySupervisor:
 
     def _shutdown(self) -> None:
         self._stop.set()
+        self._stop_settings()
         self._stop_float(graceful=True, timeout=5.0)
 
     def _prompt_manual_update(self, info: UpdateInfo) -> None:

@@ -14,7 +14,9 @@ from .config import AppConfig
 from .icons import make_tray_icon
 from .modern_menu import MenuAction, ModernPopupMenu, pointer_xy
 from .settings import open_settings_dialog
+from .label_modes import current_display
 from .taskbar_label import TaskbarLabel
+from .usage_basis import usage_percent
 from .updater import (
     UpdateInfo,
     dismiss_version,
@@ -47,7 +49,6 @@ class UsageTrayApp:
         self._config = config
         self._get_token = get_token
         self._refresh_seconds = max(60, config.refresh_interval_seconds)
-        self._open_dashboard_on_click = config.open_dashboard_on_click
         self._show_taskbar_label = config.show_taskbar_label
         self._snapshot: Optional[UsageSnapshot] = None
         self._last_error: Optional[str] = None
@@ -73,20 +74,20 @@ class UsageTrayApp:
     def _on_config_saved(self, config: AppConfig) -> None:
         self._config = config
         self._refresh_seconds = max(60, config.refresh_interval_seconds)
-        self._open_dashboard_on_click = config.open_dashboard_on_click
         self._show_taskbar_label = config.show_taskbar_label
-        if self._open_dashboard_on_click:
-            self._icon.default_action = self._menu_open_dashboard
-        else:
-            self._icon.default_action = None
+        self._icon.default_action = None
         if self._taskbar:
             self._taskbar.set_visible(config.show_taskbar_label)
             self._taskbar.set_thresholds(config.usage_thresholds())
+            self._taskbar.set_appearance(
+                config.label_bg_color,
+                config.resolved_label_fg(),
+                config.threshold_colors(),
+            )
             if config.label_x is not None and config.label_y is not None:
                 self._taskbar.apply_saved_position(config.label_x, config.label_y)
-            self._taskbar.set_left_click_handler(
-                self._open_dashboard if config.open_dashboard_on_click else None
-            )
+            self._taskbar.set_left_click_handler(None)
+            self._taskbar.set_double_click_handler(self._open_dashboard)
         self._apply_ui()
 
     def _get_label_position(self) -> tuple[int | None, int | None]:
@@ -258,15 +259,18 @@ class UsageTrayApp:
         )
 
     def _apply_ui(self) -> None:
-        amount: float | None = None
+        threshold_amount: float | None = None
         taskbar_text = "$-.--"
         tooltip = "Cursor usage"
         tray_tip = "Cursor usage"
         has_error = False
 
         if self._snapshot:
-            amount = self._snapshot.on_demand_usd
-            taskbar_text = self._snapshot.label_short
+            display = current_display(self._config, self._snapshot, mode_index=0, error=False)
+            threshold_amount = display.usage_percent if display.use_threshold_colors else usage_percent(
+                self._snapshot, self._config.usage_basis_enum()
+            )
+            taskbar_text = display.text
             tooltip = self._snapshot.tooltip
             tray_tip = _tray_tip(_snapshot_tray_tip(self._snapshot))
         elif self._last_error:
@@ -282,13 +286,15 @@ class UsageTrayApp:
         if self._taskbar:
 
             thresholds = self._config.usage_thresholds()
+            fg_override = None if threshold_amount is not None else self._config.resolved_label_fg()
 
             def update_taskbar() -> None:
                 self._taskbar.update(
                     taskbar_text,
-                    amount_usd=amount,
+                    usage_percent=threshold_amount,
                     tooltip=tooltip,
                     thresholds=thresholds,
+                    fg_override=fg_override,
                 )
 
             try:
@@ -297,13 +303,15 @@ class UsageTrayApp:
                 pass
 
         thresholds = self._config.usage_thresholds()
+        colors = self._config.threshold_colors()
         try:
             if has_error:
-                self._icon.icon = make_tray_icon(error=True)
+                self._icon.icon = make_tray_icon(error=True, colors=colors)
             elif self._snapshot:
-                self._icon.icon = make_tray_icon(self._snapshot.on_demand_usd, thresholds=thresholds)
+                icon_pct = usage_percent(self._snapshot, self._config.usage_basis_enum())
+                self._icon.icon = make_tray_icon(icon_pct, thresholds=thresholds, colors=colors)
             else:
-                self._icon.icon = make_tray_icon(thresholds=thresholds)
+                self._icon.icon = make_tray_icon(thresholds=thresholds, colors=colors)
             self._icon.title = tray_tip
         except (ValueError, OSError):
             pass
@@ -337,9 +345,6 @@ class UsageTrayApp:
             self.refresh_once()
 
     def run(self) -> None:
-        if self._open_dashboard_on_click:
-            self._icon.default_action = self._menu_open_dashboard
-
         threading.Thread(target=self._icon.run, daemon=True).start()
 
         if self._show_taskbar_label:
@@ -347,8 +352,11 @@ class UsageTrayApp:
                 initial_x=self._config.label_x,
                 initial_y=self._config.label_y,
                 thresholds=self._config.usage_thresholds(),
+                bg_color=self._config.label_bg_color,
+                base_fg=self._config.resolved_label_fg(),
+                threshold_colors=self._config.threshold_colors(),
                 on_position_changed=self._on_label_position_changed,
-                on_left_click=self._open_dashboard if self._open_dashboard_on_click else None,
+                on_double_click=self._open_dashboard,
                 on_right_click=self._show_context_menu,
             )
             self._tk_root = self._taskbar.root

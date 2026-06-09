@@ -1,9 +1,7 @@
 from __future__ import annotations
 
-
-
 import tkinter as tk
-
+from collections.abc import Callable
 from tkinter import ttk
 
 
@@ -261,6 +259,118 @@ def apply_theme(root: tk.Misc) -> None:
 def card(parent: tk.Misc, **kwargs) -> ttk.Frame:
 
     return ttk.Frame(parent, style="Card.TFrame", padding=16, **kwargs)
+
+
+def _rounded_polygon(canvas: tk.Canvas, x1: int, y1: int, x2: int, y2: int, radius: int, **kwargs) -> int:
+    r = min(radius, (x2 - x1) // 2, (y2 - y1) // 2)
+    points = [
+        x1 + r,
+        y1,
+        x2 - r,
+        y1,
+        x2,
+        y1,
+        x2,
+        y1 + r,
+        x2,
+        y2 - r,
+        x2,
+        y2,
+        x2 - r,
+        y2,
+        x1 + r,
+        y2,
+        x1,
+        y2,
+        x1,
+        y2 - r,
+        x1,
+        y1 + r,
+        x1,
+        y1,
+    ]
+    return canvas.create_polygon(points, smooth=True, **kwargs)
+
+
+def compact_button(
+    parent: tk.Misc,
+    text: str,
+    command: Callable[[], None],
+    *,
+    accent: bool = False,
+    width: int | None = None,
+    parent_bg: str = CARD,
+) -> tk.Canvas:
+    """Low-profile pill button with rounded corners."""
+    fill = ACCENT if accent else CARD
+    hover = ACCENT_HOVER if accent else HOVER
+    font = ("Segoe UI", 9)
+    height = 20
+    radius = 6
+    pad_x = 10
+
+    measure = tk.Label(parent, text=text, font=font)
+    measure.update_idletasks()
+    text_w = measure.winfo_reqwidth()
+    measure.destroy()
+
+    btn_w = width if width is not None else max(text_w + pad_x * 2, 28)
+    canvas = tk.Canvas(
+        parent,
+        width=btn_w,
+        height=height,
+        highlightthickness=0,
+        bd=0,
+        bg=parent_bg,
+        cursor="hand2",
+    )
+
+    def draw(bg: str) -> None:
+        canvas.delete("all")
+        outline = ACCENT if accent else BORDER
+        _rounded_polygon(canvas, 1, 1, btn_w - 1, height - 1, radius, fill=bg, outline=outline)
+        canvas.create_text(btn_w // 2, height // 2, text=text, fill=TEXT, font=font)
+
+    draw(fill)
+    canvas.bind("<Enter>", lambda _e: draw(hover))
+    canvas.bind("<Leave>", lambda _e: draw(fill))
+    canvas.bind("<Button-1>", lambda _e: command())
+    return canvas
+
+
+def color_swatch(
+    parent: tk.Misc,
+    color: str,
+    command: Callable[[], None],
+    *,
+    size: int = 18,
+    parent_bg: str = CARD,
+) -> tk.Canvas:
+    """Small rounded color preview; click opens picker."""
+    canvas = tk.Canvas(
+        parent,
+        width=size,
+        height=size,
+        highlightthickness=0,
+        bd=0,
+        bg=parent_bg,
+        cursor="hand2",
+    )
+
+    def draw(fill: str) -> None:
+        canvas.delete("all")
+        _rounded_polygon(canvas, 1, 1, size - 1, size - 1, 4, fill=fill, outline=BORDER)
+
+    draw(color)
+    canvas._swatch_color = color  # type: ignore[attr-defined]
+
+    def set_color(fill: str) -> None:
+        canvas._swatch_color = fill  # type: ignore[attr-defined]
+        draw(fill)
+
+    canvas.set_color = set_color  # type: ignore[attr-defined]
+    canvas.bind("<Button-1>", lambda _e: command())
+    return canvas
 
 
 

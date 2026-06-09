@@ -8,10 +8,10 @@ from .api import CursorUsageClient, DASHBOARD_URL, UsageSnapshot
 from .config import AppConfig
 from .ipc_signals import config_mtime, consume_label_reset_request, wait_refresh
 from .label_modes import current_display, enabled_modes
+from .usage_basis import usage_percent
 from .shutdown import close_handle, open_shutdown_event, wait_shutdown
 from .state_store import AppState, write_state
 from .taskbar_label import TaskbarLabel
-from .usage_levels import usage_style
 from .__version__ import __version__
 
 TRAY_TIP_MAX = 127
@@ -38,7 +38,6 @@ class FloatApp:
         self._config = config
         self._get_token = get_token
         self._refresh_seconds = max(60, config.refresh_interval_seconds)
-        self._open_dashboard_on_click = config.open_dashboard_on_click
         self._snapshot: Optional[UsageSnapshot] = None
         self._last_error: Optional[str] = None
         self._stop = threading.Event()
@@ -63,22 +62,25 @@ class FloatApp:
             self._taskbar.root.after(0, callback)
 
     def _needs_tokens(self) -> bool:
-        return self._config.label_show_tokens
+        return self._config.label_show_tokens or self._config.label_show_daily_tokens
 
     def _on_config_saved(self, config: AppConfig) -> None:
         self._config = config
         self._refresh_seconds = max(60, config.refresh_interval_seconds)
-        self._open_dashboard_on_click = config.open_dashboard_on_click
         self._label_mode_index = 0
         if self._taskbar:
             self._taskbar.set_thresholds(config.usage_thresholds())
+            self._taskbar.set_appearance(
+                config.label_bg_color,
+                config.resolved_label_fg(),
+                config.threshold_colors(),
+            )
             if config.label_x is not None and config.label_y is not None:
                 cx, cy = self._taskbar.current_position()
                 if config.label_x != cx or config.label_y != cy:
                     self._taskbar.apply_saved_position(config.label_x, config.label_y)
-            self._taskbar.set_left_click_handler(
-                self._open_dashboard if config.open_dashboard_on_click else None
-            )
+            self._taskbar.set_left_click_handler(None)
+            self._taskbar.set_double_click_handler(self._open_dashboard)
         self._run_on_main(self._restart_alternate_timer)
         self._apply_ui()
 
@@ -120,7 +122,7 @@ class FloatApp:
         sys.exit(0)
 
     def _write_shared_state(self, *, tray_tip: str, tooltip: str, has_error: bool) -> None:
-        amount = self._snapshot.on_demand_usd if self._snapshot else None
+        amount = usage_percent(self._snapshot, self._config.usage_basis_enum()) if self._snapshot else None
         membership = self._snapshot.membership_type if self._snapshot else ""
         write_state(
             AppState(
@@ -161,20 +163,16 @@ class FloatApp:
             error=has_error,
         )
         thresholds = self._config.usage_thresholds()
-        amount = display.amount_usd if display.use_threshold_colors else None
-        if not display.use_threshold_colors:
-            neutral = usage_style(None, thresholds)
-            fg = neutral.fg
-        else:
-            fg = usage_style(amount, thresholds).fg
+        pct = display.usage_percent if display.use_threshold_colors else None
+        fg_override = None if display.use_threshold_colors else self._config.resolved_label_fg()
 
         def update_taskbar() -> None:
             self._taskbar.update(
                 display.text,
-                amount_usd=amount,
+                usage_percent=pct,
                 tooltip=tooltip,
                 thresholds=thresholds,
-                fg_override=fg if not display.use_threshold_colors else None,
+                fg_override=fg_override,
             )
 
         self._run_on_main(update_taskbar)
@@ -240,7 +238,8 @@ class FloatApp:
 
     def _fetch_usage(self) -> tuple[Optional[UsageSnapshot], Optional[str]]:
         token, source = self._get_token()
-        include_tokens = self._needs_tokens()
+        include_cycle = self._config.label_show_tokens
+        include_daily = self._config.label_show_daily_tokens
         if not token:
             return None, (
                 f"Sin sesión de Cursor.\n{source}\n"
@@ -249,7 +248,10 @@ class FloatApp:
 
         try:
             client = CursorUsageClient(token)
-            snapshot = client.fetch_snapshot_with_tokens(include_tokens=include_tokens)
+            snapshot = client.fetch_snapshot_with_tokens(
+                include_cycle_tokens=include_cycle,
+                include_daily_tokens=include_daily,
+            )
             return snapshot, None
         except PermissionError as exc:
             return None, str(exc)
@@ -302,8 +304,11 @@ class FloatApp:
             initial_x=self._config.label_x,
             initial_y=self._config.label_y,
             thresholds=self._config.usage_thresholds(),
+            bg_color=self._config.label_bg_color,
+            base_fg=self._config.resolved_label_fg(),
+            threshold_colors=self._config.threshold_colors(),
             on_position_changed=self._on_label_position_changed,
-            on_left_click=self._open_dashboard if self._open_dashboard_on_click else None,
+            on_double_click=self._open_dashboard,
         )
         threading.Thread(target=self._watch_external_signals, daemon=True).start()
         self.refresh_once()

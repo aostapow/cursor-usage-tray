@@ -1,6 +1,21 @@
 {
-  "session_token": "",
-  "refresh_interval_seconds": 120,
+  "refresh_interval_seconds": 90,
   "display_mode": "on_demand_usd",
-  "open_dashboard_on_click": true
+  "open_dashboard_on_click": false,
+  "start_with_windows": true,
+  "label_x": 1402,
+  "label_y": 1036,
+  "threshold_green_max": 10.0,
+  "threshold_yellow_max": 20.0,
+  "label_alternate_seconds": 10,
+  "label_show_usd": true,
+  "label_show_tokens": true,
+  "label_show_daily_tokens": false,
+  "label_show_plan": true,
+  "label_bg_color": null,
+  "label_fg_color": null,
+  "threshold_color_low": "#008000",
+  "threshold_color_medium": "#ffff00",
+  "threshold_color_high": "#ff0000",
+  "usage_basis": "on_demand"
 }

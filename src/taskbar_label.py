@@ -6,7 +6,7 @@ import winreg
 from ctypes import wintypes
 from typing import Callable, Optional
 
-from .usage_levels import UsageThresholds, usage_style
+from .usage_levels import DEFAULT_LABEL_FG, ThresholdColors, UsageThresholds, usage_level
 
 user32 = ctypes.windll.user32
 shell32 = ctypes.windll.shell32
@@ -55,6 +55,10 @@ CLOCK_GAP_PX = 8
 BOUNDS_CHECK_MS = 2000
 Z_ORDER_REFRESH_MS = 300
 POSITION_SAVE_DEBOUNCE_MS = 150
+
+
+def default_label_bg() -> str:
+    return "#f3f3f3" if _system_uses_light_theme() else "#202020"
 
 
 def _system_uses_light_theme() -> bool:
@@ -158,23 +162,30 @@ class TaskbarLabel:
         initial_x: int | None = None,
         initial_y: int | None = None,
         thresholds: UsageThresholds | None = None,
+        bg_color: str | None = None,
+        base_fg: str | None = None,
+        threshold_colors: ThresholdColors | None = None,
         on_position_changed: Optional[Callable[[int, int], None]] = None,
         on_left_click: Optional[Callable[[], None]] = None,
+        on_double_click: Optional[Callable[[], None]] = None,
         on_right_click: Optional[Callable[[tk.Event], None]] = None,
     ) -> None:
         self._on_position_changed = on_position_changed
         self._on_left_click = on_left_click
+        self._double_click_handler = on_double_click
         self._on_right_click = on_right_click
         self._closed = False
         self._saved_x = initial_x
         self._saved_y = initial_y
         self._thresholds = (thresholds or UsageThresholds()).normalized()
+        self._threshold_colors = threshold_colors or ThresholdColors()
+        self._bg_color = bg_color
+        self._base_fg = base_fg or DEFAULT_LABEL_FG
         self._drag_origin: tuple[int, int] | None = None
         self._drag_moved = False
         self._persist_job: str | None = None
         self._raise_paused = False
-        light = _system_uses_light_theme()
-        self._bg = "#f3f3f3" if light else "#202020"
+        self._bg = self._resolve_bg()
 
         self.root = tk.Tk()
         self.root.withdraw()
@@ -185,7 +196,7 @@ class TaskbarLabel:
             self.root,
             text="$-.--",
             font=("Segoe UI Semibold", 12),
-            fg="#ffffff",
+            fg=self._base_fg,
             bg=self._bg,
             padx=6,
             pady=2,
@@ -197,6 +208,7 @@ class TaskbarLabel:
             widget.bind("<Button-1>", self._on_drag_start)
             widget.bind("<B1-Motion>", self._on_drag_motion)
             widget.bind("<ButtonRelease-1>", self._on_drag_release)
+            widget.bind("<Double-Button-1>", self._on_double_click)
             widget.bind("<Button-3>", self._handle_right_click)
 
         self.root.update_idletasks()
@@ -292,6 +304,24 @@ class TaskbarLabel:
     def set_left_click_handler(self, handler: Optional[Callable[[], None]]) -> None:
         self._on_left_click = handler
 
+    def set_double_click_handler(self, handler: Optional[Callable[[], None]]) -> None:
+        self._double_click_handler = handler
+
+    def _resolve_bg(self) -> str:
+        return self._bg_color or default_label_bg()
+
+    def set_appearance(
+        self,
+        bg_color: str | None,
+        base_fg: str | None,
+        threshold_colors: ThresholdColors,
+    ) -> None:
+        self._bg_color = bg_color
+        self._base_fg = base_fg or DEFAULT_LABEL_FG
+        self._threshold_colors = threshold_colors
+        self._bg = self._resolve_bg()
+        self.update(self._label.cget("text"), thresholds=self._thresholds)
+
     def _cancel_persist_job(self) -> None:
         if not self._persist_job:
             return
@@ -354,7 +384,7 @@ class TaskbarLabel:
         self._drag_origin = (event.x_root, event.y_root)
         self._schedule_persist_position()
 
-    def _on_drag_release(self, _event: tk.Event) -> None:
+    def _on_drag_release(self, event: tk.Event) -> None:
         self._label.configure(cursor="hand2")
         if self._drag_moved:
             self._flush_persist_position()
@@ -362,6 +392,13 @@ class TaskbarLabel:
             self._on_left_click()
         self._drag_origin = None
         self._drag_moved = False
+
+    def _on_double_click(self, event: tk.Event) -> None:
+        if self._drag_moved:
+            return "break"
+        if self._double_click_handler:
+            self._double_click_handler()
+        return "break"
 
     def _handle_right_click(self, event: tk.Event) -> None:
         if self._on_right_click:
@@ -393,6 +430,7 @@ class TaskbarLabel:
         self,
         text: str,
         *,
+        usage_percent: float | None = None,
         amount_usd: float | None = None,
         tooltip: str = "",
         thresholds: UsageThresholds | None = None,
@@ -400,10 +438,15 @@ class TaskbarLabel:
     ) -> None:
         if thresholds is not None:
             self._thresholds = thresholds.normalized()
+        pct = usage_percent if usage_percent is not None else amount_usd
         if fg_override is not None:
             fg = fg_override
+        elif pct is not None:
+            level = usage_level(pct, self._thresholds)
+            fg = self._threshold_colors.fg_for(level)
         else:
-            fg = usage_style(amount_usd, self._thresholds).fg
+            fg = self._base_fg
+        self._bg = self._resolve_bg()
         self._label.configure(text=text, fg=fg, bg=self._bg)
         self.root.configure(bg=self._bg)
         if tooltip:

@@ -4,14 +4,22 @@ import ctypes
 import subprocess
 import sys
 import tkinter as tk
-from tkinter import ttk
+from tkinter import colorchooser, ttk
 from typing import Callable, Optional
 
 from .__version__ import __version__
 from .config import APP_DIR, CONFIG_PATH, AppConfig
-from .modern_menu import _place_win32_topmost
 from .startup import is_startup_enabled, set_startup_enabled
-from .ui_theme import apply_theme, card, tk_check
+from .taskbar_label import default_label_bg
+from .ui_theme import CARD, apply_theme, card, color_swatch, compact_button, tk_check, tk_option
+from .usage_basis import UsageBasis
+from .usage_levels import (
+    DEFAULT_LABEL_FG,
+    DEFAULT_THRESHOLD_COLOR_HIGH,
+    DEFAULT_THRESHOLD_COLOR_LOW,
+    DEFAULT_THRESHOLD_COLOR_MEDIUM,
+    HEX_COLOR_RE,
+)
 
 
 def _parse_int(value: object) -> int:
@@ -63,8 +71,6 @@ class SettingsDialog:
         self._root.grab_set()
         self._root.deiconify()
         self._root.update_idletasks()
-        _place_win32_topmost(self._root, self._root.winfo_x(), self._root.winfo_y())
-        self._root.focus_force()
 
     def _build(self) -> None:
         outer = ttk.Frame(self._root, padding=18)
@@ -79,6 +85,7 @@ class SettingsDialog:
 
         panel = card(outer)
         panel.grid(row=2, column=0, sticky="ew")
+        panel.columnconfigure(1, weight=1)
 
         row = 0
         ttk.Label(panel, text="Refresco de datos", style="Card.TLabel", font=("Segoe UI Semibold", 11)).grid(
@@ -112,73 +119,111 @@ class SettingsDialog:
         self._alternate_spin.grid(row=row, column=1, sticky="e", pady=(10, 0))
         row += 1
 
+        display_row = tk.Frame(panel, bg=CARD)
+        display_row.grid(row=row, column=0, columnspan=2, sticky="ew", pady=(8, 0))
+        display_row.columnconfigure(1, weight=1)
         self._usd_var = tk.BooleanVar(value=self._config.label_show_usd)
-        tk_check(panel, text="Mostrar USD on-demand", variable=self._usd_var).grid(
-            row=row, column=0, columnspan=2, sticky="w", pady=(8, 0)
-        )
-        row += 1
-        self._tokens_var = tk.BooleanVar(value=self._config.label_show_tokens)
-        tk_check(panel, text="Mostrar tokens del ciclo", variable=self._tokens_var).grid(
-            row=row, column=0, columnspan=2, sticky="w", pady=(4, 0)
-        )
-        row += 1
+        tk_check(display_row, text="Mostrar USD", variable=self._usd_var).grid(row=0, column=0, sticky="w")
         self._plan_var = tk.BooleanVar(value=self._config.label_show_plan)
-        tk_check(panel, text="Mostrar uso del plan", variable=self._plan_var).grid(
-            row=row, column=0, columnspan=2, sticky="w", pady=(4, 0)
+        tk_check(display_row, text="Mostrar uso del plan", variable=self._plan_var).grid(
+            row=0, column=1, sticky="e"
+        )
+        row += 1
+        tokens_row = tk.Frame(panel, bg=CARD)
+        tokens_row.grid(row=row, column=0, columnspan=2, sticky="ew", pady=(4, 0))
+        tokens_row.columnconfigure(1, weight=1)
+        self._tokens_var = tk.BooleanVar(value=self._config.label_show_tokens)
+        tk_check(tokens_row, text="Mostrar tokens ciclo", variable=self._tokens_var).grid(
+            row=0, column=0, sticky="w"
+        )
+        self._daily_tokens_var = tk.BooleanVar(value=self._config.label_show_daily_tokens)
+        tk_check(tokens_row, text="Mostrar tokens diarios", variable=self._daily_tokens_var).grid(
+            row=0, column=1, sticky="e"
         )
         row += 1
 
-        ttk.Separator(panel).grid(row=row, column=0, columnspan=2, sticky="ew", pady=14)
-        row += 1
-
-        ttk.Label(panel, text="Posición del monto", style="Card.TLabel", font=("Segoe UI Semibold", 11)).grid(
-            row=row, column=0, columnspan=2, sticky="w"
-        )
-        row += 1
         ttk.Label(
             panel,
-            text="Arrastrá el monto con el mouse para ubicarlo donde quieras.",
-            style="CardMuted.TLabel",
-            wraplength=380,
-        ).grid(row=row, column=0, columnspan=2, sticky="w", pady=(8, 0))
+            text="Consumo para monto y umbrales",
+            style="Card.TLabel",
+            font=("Segoe UI Semibold", 11),
+        ).grid(row=row, column=0, columnspan=2, sticky="w", pady=(10, 0))
         row += 1
-        ttk.Button(
-            panel,
-            text="Restablecer posición",
-            style="Ghost.TButton",
-            command=self._reset_label_position,
-        ).grid(row=row, column=0, columnspan=2, sticky="w", pady=(8, 0))
-        row += 1
-
-        self._dashboard_click_var = tk.BooleanVar(value=self._config.open_dashboard_on_click)
-        tk_check(panel, text="Clic izquierdo abre el dashboard", variable=self._dashboard_click_var).grid(
-            row=row, column=0, columnspan=2, sticky="w", pady=(8, 0)
-        )
+        self._usage_basis_var = tk.StringVar(value=UsageBasis.parse(self._config.usage_basis).value)
+        basis_row = tk.Frame(panel, bg=CARD)
+        basis_row.grid(row=row, column=0, columnspan=2, sticky="w", pady=(6, 0))
+        tk_option(
+            basis_row,
+            text="Included usage",
+            variable=self._usage_basis_var,
+            value=UsageBasis.INCLUDED.value,
+        ).pack(side="left", padx=(0, 12))
+        tk_option(
+            basis_row,
+            text="On-demand",
+            variable=self._usage_basis_var,
+            value=UsageBasis.ON_DEMAND.value,
+        ).pack(side="left", padx=(0, 12))
+        tk_option(
+            basis_row,
+            text="Auto",
+            variable=self._usage_basis_var,
+            value=UsageBasis.AUTO.value,
+        ).pack(side="left")
         row += 1
 
         ttk.Separator(panel).grid(row=row, column=0, columnspan=2, sticky="ew", pady=14)
         row += 1
 
-        ttk.Label(panel, text="Umbrales de color (USD)", style="Card.TLabel", font=("Segoe UI Semibold", 11)).grid(
+        ttk.Label(panel, text="Apariencia del panel", style="Card.TLabel", font=("Segoe UI Semibold", 11)).grid(
             row=row, column=0, columnspan=2, sticky="w"
         )
         row += 1
-        ttk.Label(panel, text="Verde si es menor a", style="CardMuted.TLabel").grid(row=row, column=0, sticky="w", pady=(8, 0))
-        self._green_var = tk.StringVar(value=str(self._config.threshold_green_max))
-        self._green_spin = ttk.Spinbox(
-            panel, from_=0, to=9999, increment=1, textvariable=self._green_var, width=10
+        self._bg_color_var = tk.StringVar(value=self._config.label_bg_color or "")
+        row = self._add_color_row(
+            panel,
+            row,
+            "Color de fondo",
+            self._bg_color_var,
+            default_label_bg(),
         )
-        self._green_spin.grid(row=row, column=1, sticky="e", pady=(8, 0))
-        row += 1
-        ttk.Label(panel, text="Amarillo hasta (inclusive)", style="CardMuted.TLabel").grid(
-            row=row, column=0, sticky="w", pady=(6, 0)
+        self._fg_color_var = tk.StringVar(value=self._config.label_fg_color or "")
+        row = self._add_color_row(
+            panel,
+            row,
+            "Color de texto",
+            self._fg_color_var,
+            DEFAULT_LABEL_FG,
+        )
+
+        self._green_var = tk.StringVar(value=str(self._config.threshold_green_max))
+        self._thresh_low_var = tk.StringVar(value=self._config.threshold_color_low)
+        row = self._add_threshold_row(
+            panel,
+            row,
+            "Umbral 1",
+            self._thresh_low_var,
+            DEFAULT_THRESHOLD_COLOR_LOW,
+            self._green_var,
         )
         self._yellow_var = tk.StringVar(value=str(self._config.threshold_yellow_max))
-        self._yellow_spin = ttk.Spinbox(
-            panel, from_=0, to=9999, increment=1, textvariable=self._yellow_var, width=10
+        self._thresh_medium_var = tk.StringVar(value=self._config.threshold_color_medium)
+        row = self._add_threshold_row(
+            panel,
+            row,
+            "Umbral 2",
+            self._thresh_medium_var,
+            DEFAULT_THRESHOLD_COLOR_MEDIUM,
+            self._yellow_var,
         )
-        self._yellow_spin.grid(row=row, column=1, sticky="e", pady=(6, 0))
-        row += 1
+        self._thresh_high_var = tk.StringVar(value=self._config.threshold_color_high)
+        row = self._add_threshold_row(
+            panel,
+            row,
+            "Umbral 3",
+            self._thresh_high_var,
+            DEFAULT_THRESHOLD_COLOR_HIGH,
+        )
 
         ttk.Separator(panel).grid(row=row, column=0, columnspan=2, sticky="ew", pady=14)
         row += 1
@@ -212,6 +257,91 @@ class SettingsDialog:
         ttk.Button(buttons, text="Cancelar", style="Ghost.TButton", command=self._close).grid(row=0, column=1, padx=(0, 8))
         self._save_button = ttk.Button(buttons, text="Guardar", style="Accent.TButton", command=self._save)
         self._save_button.grid(row=0, column=2)
+
+    def _add_color_row(
+        self,
+        panel: ttk.Frame,
+        row: int,
+        label_text: str,
+        var: tk.StringVar,
+        default: str,
+    ) -> int:
+        ttk.Label(panel, text=label_text, style="CardMuted.TLabel").grid(
+            row=row, column=0, sticky="w", pady=(4, 0)
+        )
+        controls = tk.Frame(panel, bg=CARD)
+        controls.grid(row=row, column=1, sticky="e", pady=(4, 0))
+        preview_bg = var.get() or default
+
+        def pick() -> None:
+            initial = var.get() or default
+            result = colorchooser.askcolor(color=initial, parent=self._root, title=label_text)
+            if result and result[1]:
+                var.set(result[1])
+                swatch.set_color(result[1])
+
+        swatch = color_swatch(controls, preview_bg, pick, parent_bg=CARD)
+        swatch.pack(side="left", padx=(0, 4))
+        compact_button(controls, "…", pick, width=22, parent_bg=CARD).pack(side="left")
+        return row + 1
+
+    def _add_threshold_row(
+        self,
+        panel: ttk.Frame,
+        row: int,
+        label_text: str,
+        color_var: tk.StringVar,
+        color_default: str,
+        amount_var: tk.StringVar | None = None,
+    ) -> int:
+        ttk.Label(panel, text=label_text, style="CardMuted.TLabel").grid(
+            row=row, column=0, sticky="w", pady=(6, 0)
+        )
+        controls = tk.Frame(panel, bg=CARD)
+        controls.grid(row=row, column=1, sticky="e", pady=(6, 0))
+        preview_bg = color_var.get() or color_default
+        picker_title = f"{label_text} — color"
+
+        def pick() -> None:
+            initial = color_var.get() or color_default
+            result = colorchooser.askcolor(color=initial, parent=self._root, title=picker_title)
+            if result and result[1]:
+                color_var.set(result[1])
+                swatch.set_color(result[1])
+
+        swatch = color_swatch(controls, preview_bg, pick, parent_bg=CARD)
+        swatch.pack(side="left", padx=(0, 4))
+        compact_button(controls, "…", pick, width=22, parent_bg=CARD).pack(side="left")
+        if amount_var is not None:
+            spin = ttk.Spinbox(
+                controls,
+                from_=0,
+                to=100,
+                increment=1,
+                textvariable=amount_var,
+                width=6,
+            )
+            spin.pack(side="left", padx=(10, 0))
+            ttk.Label(controls, text="%", style="CardMuted.TLabel").pack(side="left", padx=(2, 0))
+            if label_text == "Umbral 1":
+                self._green_spin = spin
+            else:
+                self._yellow_spin = spin
+        return row + 1
+
+    def _parse_optional_color(self, value: str, field_name: str) -> str | None:
+        text = value.strip()
+        if not text:
+            return None
+        if not HEX_COLOR_RE.match(text):
+            raise ValueError(field_name)
+        return text
+
+    def _parse_required_color(self, value: str, field_name: str) -> str:
+        text = value.strip()
+        if not HEX_COLOR_RE.match(text):
+            raise ValueError(field_name)
+        return text
 
     def _reset_label_position(self) -> None:
         self._config.label_x = None
@@ -250,8 +380,9 @@ class SettingsDialog:
 
         show_usd = bool(self._usd_var.get())
         show_tokens = bool(self._tokens_var.get())
+        show_daily_tokens = bool(self._daily_tokens_var.get())
         show_plan = bool(self._plan_var.get())
-        if not (show_usd or show_tokens or show_plan):
+        if not (show_usd or show_tokens or show_daily_tokens or show_plan):
             _win_alert("Activá al menos un modo de visualización del monto.", error=True)
             return
 
@@ -260,10 +391,20 @@ class SettingsDialog:
         if self._on_get_label_position:
             label_x, label_y = self._on_get_label_position()
 
+        try:
+            label_bg_color = self._parse_optional_color(self._bg_color_var.get(), "color de fondo")
+            label_fg_color = self._parse_optional_color(self._fg_color_var.get(), "color de texto")
+            threshold_color_low = self._parse_required_color(self._thresh_low_var.get(), "color verde")
+            threshold_color_medium = self._parse_required_color(self._thresh_medium_var.get(), "color amarillo")
+            threshold_color_high = self._parse_required_color(self._thresh_high_var.get(), "color rojo")
+        except ValueError as exc:
+            _win_alert(f"Revisá el {exc} (formato #RRGGBB).", error=True)
+            return
+
         updated = AppConfig(
             refresh_interval_seconds=refresh,
             display_mode=self._config.display_mode,
-            open_dashboard_on_click=bool(self._dashboard_click_var.get()),
+            open_dashboard_on_click=self._config.open_dashboard_on_click,
             show_taskbar_label=True,
             show_tray_icon=True,
             start_with_windows=startup,
@@ -274,8 +415,15 @@ class SettingsDialog:
             label_alternate_seconds=alternate,
             label_show_usd=show_usd,
             label_show_tokens=show_tokens,
+            label_show_daily_tokens=show_daily_tokens,
             label_show_plan=show_plan,
             auto_install_updates=bool(self._auto_install_var.get()),
+            label_bg_color=label_bg_color,
+            label_fg_color=label_fg_color,
+            threshold_color_low=threshold_color_low,
+            threshold_color_medium=threshold_color_medium,
+            threshold_color_high=threshold_color_high,
+            usage_basis=UsageBasis.parse(self._usage_basis_var.get()).value,
         )
 
         try:
@@ -296,8 +444,7 @@ class SettingsDialog:
             self._on_save(updated)
         except Exception as exc:  # noqa: BLE001
             _win_alert(f"Configuración guardada, pero hubo un error al aplicarla.\n{exc}", error=True)
-
-        self._close()
+        self._config = updated
 
     def _close(self) -> None:
         callback = self._on_dialog_closed
